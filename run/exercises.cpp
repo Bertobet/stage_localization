@@ -31,6 +31,8 @@ namespace tags {
     struct node_size {};
     //! @brief Shape of the current node.
     struct node_shape {};
+    //! @brief is anchor or not
+    struct is_anchor {};
     // ... add more as needed, here and in the tuple_store<...> option below
 }
 
@@ -55,7 +57,14 @@ MAIN() {
     // import tag names in the local scope.
     using namespace tags;
 
-    // sample code below (substitute with the solution to the exercises)...
+    int id = node.uid;
+
+    bool anchor = (id < 8);
+    node.storage(is_anchor{}) = anchor;
+    node.storage(node_color{}) = anchor ? color(RED) : color(GREEN);
+
+    // Nel caso volessi che le ancore abbiano una posizione specifica
+    //if (id == 0) node.position() = make_vec(0,   0);
 
     // usage of aggregate constructs
     field<double> f = nbr(CALL, 4.2); // nbr with single value
@@ -67,12 +76,12 @@ MAIN() {
     });
 
     // usage of node physics
-    node.velocity() = -node.position()/communication_range;
+    //node.velocity() = -node.position()/communication_range;
 
     // usage of node storage
-    node.storage(node_size{}) = 10;
-    node.storage(node_color{}) = color(GREEN);
+    node.storage(node_size{})  = 10;
     node.storage(node_shape{}) = shape::sphere;
+
 }
 //! @brief Export types used by the main function (update it when expanding the program).
 FUN_EXPORT main_t = export_list<double, int, monitor_t>;
@@ -107,13 +116,14 @@ using spawn_s = sequence::multiple_n<node_num, 0>;
 using rectangle_d = distribution::rect_n<1, 0, 0, 500, 500>;
 //! @brief The contents of the node storage as tags and associated types.
 using store_t = tuple_store<
-    node_color,                 color,
-    node_size,                  double,
-    node_shape,                 shape
+    node_color, color,
+    node_size,  double,
+    node_shape, shape,
+    is_anchor,  bool
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
-    node_size,                  aggregator::mean<double>
+    node_size, aggregator::mean<double>
 >;
 
 //! @brief The general simulation options.
