@@ -33,7 +33,10 @@ namespace tags {
     struct node_shape {};
     //! @brief is anchor or not
     struct is_anchor {};
-    // ... add more as needed, here and in the tuple_store<...> option below
+    //! @brief hop map
+    struct hop_map {};
+    //! @brief support string
+    struct spr {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -52,6 +55,18 @@ FUN bool recent_dis_monitor(ARGS, bool disrisk) { CODE
 }
 FUN_EXPORT monitor_t = export_list<past_ctl_t, slcs_t>;
 
+// Funzione del processo
+/*FUN fcpp::tuple<int,bool> hop_from_node(ARGS, message const& m){ CODE
+    using fcpp::coordination::abf_hops;
+
+    bool is_source = (node.uid == 1);
+
+    hops_t d = abf_hops(CALL, is_source);
+
+    return make_tuple(static_cast<int>(d), true);
+}
+FUN_EXPORT hop_from_node_t = export_list<hops_t>;*/
+
 // @brief Main function.
 MAIN() {
     // import tag names in the local scope.
@@ -66,14 +81,28 @@ MAIN() {
     // Nel caso volessi che le ancore abbiano una posizione specifica
     //if (id == 0) node.position() = make_vec(0,   0);
 
-    // usage of aggregate constructs
-    field<double> f = nbr(CALL, 4.2); // nbr with single value
-    int x = old(CALL, 0, [&](int a){  // old with initial value and update function
-        return a+1;
-    });
-    int y = nbr(CALL, 0, [&](field<int> a){ // nbr with initial value and update function
-        return min_hood(CALL, a);
-    });
+    std::vector<int> my_keys = { id };
+    //fcpp::tuple<int,bool> (*pointer)(ARGS, int) = hop_from_node;
+    //auto hop_map_all = spawn(CALL, hop_from_node, my_keys);
+
+    auto hop_map_all = spawn(CALL, [&](int nodeid){
+        using fcpp::coordination::abf_hops;
+        bool is_source = (node.uid == nodeid);
+        hops_t d = abf_hops(CALL, is_source);
+        return make_tuple(static_cast<int>(d), true);
+    }, my_keys);
+    
+
+    node.storage(hop_map{}) = hop_map_all;
+
+    std::stringstream ss;
+    if (hop_map_all.empty()) {
+        ss << "(vuota)";
+    } else {
+        for (auto const& [key, value] : hop_map_all) 
+            ss << "(id: " << key << " dista: " << value << " ) ";
+    }
+
 
     // usage of node physics
     //node.velocity() = -node.position()/communication_range;
@@ -81,10 +110,11 @@ MAIN() {
     // usage of node storage
     node.storage(node_size{})  = 10;
     node.storage(node_shape{}) = shape::sphere;
+    node.storage(spr{}) = ss.str();
 
 }
 //! @brief Export types used by the main function (update it when expanding the program).
-FUN_EXPORT main_t = export_list<double, int, monitor_t>;
+FUN_EXPORT main_t = export_list<double, int, monitor_t/*, hop_from_node_t*/>;
 
 } // namespace coordination
 
@@ -119,7 +149,9 @@ using store_t = tuple_store<
     node_color, color,
     node_size,  double,
     node_shape, shape,
-    is_anchor,  bool
+    is_anchor,  bool,
+    hop_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
+    spr,        std::string
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
@@ -131,7 +163,7 @@ DECLARE_OPTIONS(list,
     parallel<true>,      // multithreading enabled on node rounds
     synchronised<false>, // optimise for asynchronous networks
     program<coordination::main>,   // program to be run (refers to MAIN above)
-    exports<coordination::main_t>, // export type list (types used in messages)
+    exports<coordination::main_t, std::unordered_set<int, fcpp::common::hash<int>>>, // export type list (types used in messages)
     retain<metric::retain<2,1>>,   // messages are kept for 2 seconds before expiring
     round_schedule<round_s>, // the sequence generator for round events on nodes
     log_schedule<log_s>,     // the sequence generator for log events on the network
