@@ -55,35 +55,48 @@ FUN bool recent_dis_monitor(ARGS, bool disrisk) { CODE
 }
 FUN_EXPORT monitor_t = export_list<past_ctl_t, slcs_t>;
 
-// Funzione del processo
-/*FUN fcpp::tuple<int,bool> hop_from_node(ARGS, message const& m){ CODE
-    using fcpp::coordination::abf_hops;
-
-    bool is_source = (node.uid == 1);
-
-    hops_t d = abf_hops(CALL, is_source);
-
-    return make_tuple(static_cast<int>(d), true);
-}
-FUN_EXPORT hop_from_node_t = export_list<hops_t>;*/
-
 // @brief Main function.
 MAIN() {
     // import tag names in the local scope.
     using namespace tags;
 
     int id = node.uid;
+    double side = 500.0;  
+    double step = 100.0;
 
-    bool anchor = (id < 8);
-    node.storage(is_anchor{}) = anchor;
-    node.storage(node_color{}) = anchor ? color(RED) : color(GREEN);
+    int anchors_per_side = static_cast<int>(side / step);
+    int total_anchors = anchors_per_side * 4; 
 
-    // Nel caso volessi che le ancore abbiano una posizione specifica
-    //if (id == 0) node.position() = make_vec(0,   0);
+    if (id < total_anchors) {
+        double x = 0, y = 0;
+        int pos = id;
+
+        if (pos <= anchors_per_side) {
+            x = pos * step;
+            y = side;
+        }
+        else if (pos <= anchors_per_side * 2) {
+            x = side;
+            y = side - (pos - anchors_per_side) * step;
+        }
+        else if (pos <= anchors_per_side * 3) {
+            x = side - (pos - anchors_per_side * 2) * step;
+            y = 0;
+        }
+        else {
+            x = 0;
+            y = (pos - anchors_per_side * 3) * step;
+        }
+
+        node.position() = make_vec(x, y);
+        node.storage(is_anchor{}) = true;
+        node.storage(node_color{}) = color(RED);
+    } else {
+        node.storage(is_anchor{}) = false;
+        node.storage(node_color{}) = color(GREEN);
+    }
 
     std::vector<int> my_keys = { id };
-    //fcpp::tuple<int,bool> (*pointer)(ARGS, int) = hop_from_node;
-    //auto hop_map_all = spawn(CALL, hop_from_node, my_keys);
 
     auto hop_map_all = spawn(CALL, [&](int nodeid){
         using fcpp::coordination::abf_hops;
