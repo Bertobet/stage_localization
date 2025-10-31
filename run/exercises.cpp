@@ -37,6 +37,12 @@ namespace tags {
     struct hop_map {};
     //! @brief support string
     struct spr {};
+    //! @brief anchor distance map
+    struct anchor_distance_map {};
+    //! @brief correction for anchor
+    struct correction_anchor {};
+    //! @brief flag booleano
+    struct flag_correction {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -96,16 +102,14 @@ MAIN() {
         node.storage(node_color{}) = color(GREEN);
     }
 
+    // Creazione hop map
     std::vector<int> my_keys = { id };
-
     auto hop_map_all = spawn(CALL, [&](int nodeid){
         using fcpp::coordination::abf_hops;
         bool is_source = (node.uid == nodeid);
         hops_t d = abf_hops(CALL, is_source);
         return make_tuple(static_cast<int>(d), true);
-    }, my_keys);
-    
-
+    }, my_keys);   
     node.storage(hop_map{}) = hop_map_all;
 
     std::stringstream ss;
@@ -113,17 +117,52 @@ MAIN() {
         ss << "(vuota)";
     } else {
         for (auto const& [key, value] : hop_map_all) 
-            ss << "(id: " << key << " dista: " << value << " ) ";
+            ss << "(id: " << key << " hop: " << value << " )";
     }
 
+    // Creazione map distance
+    std::vector<int> my_anchor_keys;
+    if (node.storage(is_anchor{}))
+        my_anchor_keys = { id };
 
-    // usage of node physics
-    //node.velocity() = -node.position()/communication_range;
+    auto distance_map_all = spawn(CALL, [&](int nodeid){
+        using fcpp::coordination::abf_hops;
+        bool is_source = (node.uid == nodeid);
+        int d = abf_distance(CALL, is_source);
+        return make_tuple(d, true);
+    }, my_anchor_keys);
+
+    node.storage(anchor_distance_map{}) = distance_map_all;
+
+    std::stringstream supp;
+    if (distance_map_all.empty()) {
+        supp << "(vuota)";
+    } else {
+        for (auto const& [key, value] : distance_map_all) 
+            supp << "(id: " << key << " dista: " << value << " )";
+    }
+
+    // Calcolo correction
+
+
+    int correction = 0;
+    int hop= 0, distance = 0;
+    if (node.storage(is_anchor{}) && !node.storage(flag_correction{}) && node.current_time() > 10){
+        for (auto const& [key, value] : distance_map_all){
+            auto it = hop_map_all.find(key);
+            distance += value;
+            hop += it->second;
+        }   
+        node.storage(flag_correction{}) = true;
+        node.storage(correction_anchor{}) = distance/hop;
+    }
+
 
     // usage of node storage
     node.storage(node_size{})  = 10;
     node.storage(node_shape{}) = shape::sphere;
-    node.storage(spr{}) = ss.str();
+    node.storage(spr{}) = supp.str();
+    
 
 }
 //! @brief Export types used by the main function (update it when expanding the program).
@@ -159,12 +198,15 @@ using spawn_s = sequence::multiple_n<node_num, 0>;
 using rectangle_d = distribution::rect_n<1, 0, 0, 500, 500>;
 //! @brief The contents of the node storage as tags and associated types.
 using store_t = tuple_store<
-    node_color, color,
-    node_size,  double,
-    node_shape, shape,
-    is_anchor,  bool,
-    hop_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
-    spr,        std::string
+    node_color,             color,
+    node_size,              double,
+    node_shape,             shape,
+    is_anchor,              bool,
+    hop_map,                std::unordered_map<int,int, fcpp::common::hash<int>>,
+    spr,                    std::string,
+    anchor_distance_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
+    correction_anchor,      int,
+    flag_correction,        bool
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
