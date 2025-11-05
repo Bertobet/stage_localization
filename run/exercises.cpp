@@ -45,6 +45,12 @@ namespace tags {
     struct flag_correction {};
     //! @brief map correction
     struct anchor_correction_map {};
+    //! @brief map x
+    struct anchor_x_map {};
+    //! @brief map y
+    struct anchor_y_map {};
+    //! @brief distance nodo-ancora
+    struct distance_nodo_ancora_map {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -75,8 +81,9 @@ MAIN() {
     int anchors_per_side = static_cast<int>(side / step);
     int total_anchors = anchors_per_side * 4; 
 
+    double x = 0, y = 0;
+
     if (id < total_anchors) {
-        double x = 0, y = 0;
         int pos = id;
 
         if (pos <= anchors_per_side) {
@@ -163,32 +170,84 @@ MAIN() {
 
     // Trasmissione correction
 
-    //std::unordered_map<int,int, fcpp::common::hash<int>> correction_map;
-
     if ((node.storage(is_anchor{}) && node.storage(flag_correction{})) || node.current_time() > 11){
         node.storage(anchor_correction_map{})[id] = node.storage(correction_anchor{});
+        
+
+        auto correction_map_all = spawn(CALL, [&](int nodeid){
+            using fcpp::coordination::abf_hops;
+            bool is_source = (node.uid == nodeid);
+            auto distance = abf_hops(CALL, is_source);
+            int d = broadcast(CALL, distance, node.storage(correction_anchor{}));
+            return make_tuple(d, true);
+        }, my_anchor_keys);
+
+        node.storage(anchor_correction_map{}) = correction_map_all;
+    }
     
 
-    auto correction_map_all = spawn(CALL, [&](int nodeid){
-         using fcpp::coordination::abf_hops;
-         bool is_source = (node.uid == nodeid);
-        auto distance = abf_hops(CALL, is_source);
-         int d = broadcast(CALL, distance, node.storage(correction_anchor{}));
-         return make_tuple(d, true);
-    }, my_anchor_keys);
 
-    node.storage(anchor_correction_map{}) = correction_map_all;
-}
-    
-
-
-    std::stringstream supp;
+    /*std::stringstream supp;
     if (node.storage(anchor_correction_map{}).empty()) {
         supp << "(vuota)";
     } else {
         for (auto const& [key, value] : node.storage(anchor_correction_map{})) 
             supp << "(id: " << key << " correction: " << value << " )";
+    }*/
+
+    // Trasmissione position ancore
+
+    if (node.storage(is_anchor{}))
+        node.storage(anchor_x_map{})[id] = x;
+
+    auto x_map_all = spawn(CALL, [&](int nodeid){
+        using fcpp::coordination::abf_hops;
+        bool is_source = (node.uid == nodeid);
+        auto distance = abf_hops(CALL, is_source);
+        int d = broadcast(CALL, distance, x);
+        return make_tuple(d, true);
+    }, my_anchor_keys);
+
+    node.storage(anchor_x_map{}) = x_map_all;
+
+    if (node.storage(is_anchor{}))
+        node.storage(anchor_y_map{})[id] = y;
+
+    auto y_map_all = spawn(CALL, [&](int nodeid){
+        using fcpp::coordination::abf_hops;
+        bool is_source = (node.uid == nodeid);
+        auto distance = abf_hops(CALL, is_source);
+        int d = broadcast(CALL, distance, y);
+        return make_tuple(d, true);
+    }, my_anchor_keys);
+
+    node.storage(anchor_y_map{}) = y_map_all;
+
+    //Calcolo distanza nodo-ancora
+    if (node.current_time() > 13){
+        for (int i = 0; i < total_anchors; i++){
+            auto& hop_map_ref = node.storage(hop_map{});
+            auto& corr_map_ref = node.storage(anchor_correction_map{});
+            auto& dist_map_ref = node.storage(distance_nodo_ancora_map{});
+
+            auto hop_it = hop_map_ref.find(i);
+            auto corr_it = corr_map_ref.find(i);
+
+            //Controlla che entrambe le chiavi esistano
+            if (hop_it != hop_map_ref.end() && corr_it != corr_map_ref.end()) {
+                dist_map_ref[i] = hop_it->second * corr_it->second;
+            }
+        }
     }
+      
+    std::stringstream supp;
+    if (node.storage(distance_nodo_ancora_map{}).empty()) {
+        supp << "(vuota)";
+    } else {
+        for (auto const& [key, value] : node.storage(distance_nodo_ancora_map{})) 
+            supp << "(id: " << key << " correction: " << value << " )";
+    }
+
 
     // usage of node storage
     node.storage(node_size{})  = 10;
@@ -239,7 +298,10 @@ using store_t = tuple_store<
     anchor_distance_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
     correction_anchor,      int,
     flag_correction,        bool,
-    anchor_correction_map,   std::unordered_map<int,int, fcpp::common::hash<int>>
+    anchor_correction_map,  std::unordered_map<int,int, fcpp::common::hash<int>>,
+    anchor_x_map,           std::unordered_map<int,int, fcpp::common::hash<int>>,
+    anchor_y_map,           std::unordered_map<int,int, fcpp::common::hash<int>>,
+    distance_nodo_ancora_map, std::unordered_map<int,int, fcpp::common::hash<int>>
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
