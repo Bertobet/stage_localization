@@ -43,6 +43,8 @@ namespace tags {
     struct correction_anchor {};
     //! @brief flag booleano
     struct flag_correction {};
+    //! @brief map correction
+    struct anchor_correction_map {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -103,6 +105,7 @@ MAIN() {
     }
 
     // Creazione hop map
+
     std::vector<int> my_keys = { id };
     auto hop_map_all = spawn(CALL, [&](int nodeid){
         using fcpp::coordination::abf_hops;
@@ -121,6 +124,7 @@ MAIN() {
     }
 
     // Creazione map distance
+
     std::vector<int> my_anchor_keys;
     if (node.storage(is_anchor{}))
         my_anchor_keys = { id };
@@ -134,13 +138,13 @@ MAIN() {
 
     node.storage(anchor_distance_map{}) = distance_map_all;
 
-    std::stringstream supp;
+    /*std::stringstream supp;
     if (distance_map_all.empty()) {
         supp << "(vuota)";
     } else {
         for (auto const& [key, value] : distance_map_all) 
             supp << "(id: " << key << " dista: " << value << " )";
-    }
+    }*/
 
     // Calcolo correction
 
@@ -148,8 +152,8 @@ MAIN() {
     int correction = 0;
     int hop= 0, distance = 0;
     if (node.storage(is_anchor{}) && !node.storage(flag_correction{}) && node.current_time() > 10){
-        for (auto const& [key, value] : distance_map_all){
-            auto it = hop_map_all.find(key);
+        for (auto const& [key, value] : node.storage(anchor_distance_map{})){
+            auto it = node.storage(hop_map{}).find(key);
             distance += value;
             hop += it->second;
         }   
@@ -157,6 +161,34 @@ MAIN() {
         node.storage(correction_anchor{}) = distance/hop;
     }
 
+    // Trasmissione correction
+
+    //std::unordered_map<int,int, fcpp::common::hash<int>> correction_map;
+
+    if ((node.storage(is_anchor{}) && node.storage(flag_correction{})) || node.current_time() > 11){
+        node.storage(anchor_correction_map{})[id] = node.storage(correction_anchor{});
+    
+
+    auto correction_map_all = spawn(CALL, [&](int nodeid){
+         using fcpp::coordination::abf_hops;
+         bool is_source = (node.uid == nodeid);
+        auto distance = abf_hops(CALL, is_source);
+         int d = broadcast(CALL, distance, node.storage(correction_anchor{}));
+         return make_tuple(d, true);
+    }, my_anchor_keys);
+
+    node.storage(anchor_correction_map{}) = correction_map_all;
+}
+    
+
+
+    std::stringstream supp;
+    if (node.storage(anchor_correction_map{}).empty()) {
+        supp << "(vuota)";
+    } else {
+        for (auto const& [key, value] : node.storage(anchor_correction_map{})) 
+            supp << "(id: " << key << " correction: " << value << " )";
+    }
 
     // usage of node storage
     node.storage(node_size{})  = 10;
@@ -206,7 +238,8 @@ using store_t = tuple_store<
     spr,                    std::string,
     anchor_distance_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
     correction_anchor,      int,
-    flag_correction,        bool
+    flag_correction,        bool,
+    anchor_correction_map,   std::unordered_map<int,int, fcpp::common::hash<int>>
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
@@ -218,7 +251,7 @@ DECLARE_OPTIONS(list,
     parallel<true>,      // multithreading enabled on node rounds
     synchronised<false>, // optimise for asynchronous networks
     program<coordination::main>,   // program to be run (refers to MAIN above)
-    exports<coordination::main_t, std::unordered_set<int, fcpp::common::hash<int>>>, // export type list (types used in messages)
+    exports<coordination::main_t, std::unordered_set<int, fcpp::common::hash<int>>, std::unordered_map<int, int, fcpp::common::hash<int>>, tuple<int, int>>, // export type list (types used in messages)
     retain<metric::retain<2,1>>,   // messages are kept for 2 seconds before expiring
     round_schedule<round_s>, // the sequence generator for round events on nodes
     log_schedule<log_s>,     // the sequence generator for log events on the network
