@@ -51,6 +51,12 @@ namespace tags {
     struct anchor_y_map {};
     //! @brief distance nodo-ancora
     struct distance_nodo_ancora_map {};
+    //! @brief x stimato
+    struct x_stimato {};
+    //! @brief y stimato
+    struct y_stimato {};
+    //! @brief support string
+    struct sprr {};
 }
 
 //! @brief The maximum communication range between nodes.
@@ -145,13 +151,13 @@ MAIN() {
 
     node.storage(anchor_distance_map{}) = distance_map_all;
 
-    /*std::stringstream supp;
+    std::stringstream supp2;
     if (distance_map_all.empty()) {
-        supp << "(vuota)";
+        supp2 << "(vuota)";
     } else {
         for (auto const& [key, value] : distance_map_all) 
-            supp << "(id: " << key << " dista: " << value << " )";
-    }*/
+            supp2 << "(id: " << key << " dista: " << value << " )";
+    }
 
     // Calcolo correction
 
@@ -248,11 +254,113 @@ MAIN() {
             supp << "(id: " << key << " correction: " << value << " )";
     }
 
+    //trilaterazione
+
+    auto& dist_map = node.storage(distance_nodo_ancora_map{});
+    auto& x_map = node.storage(anchor_x_map{});
+    auto& y_map = node.storage(anchor_y_map{});
+
+    std::vector<int> anchor_ids;
+    for (auto const& [id, _] : dist_map)
+        anchor_ids.push_back(id);
+
+    int a1 = -1, a2 = -1, a3 = -1;
+    bool found = false;
+
+    // Cerca 3 ancore non allineate
+    if (anchor_ids.size() >= 3) {
+        for (size_t i = 0; i < anchor_ids.size() && !found; ++i) {
+            for (size_t j = i + 1; j < anchor_ids.size() && !found; ++j) {
+                for (size_t k = j + 1; k < anchor_ids.size() && !found; ++k) {
+                    double x1 = x_map[anchor_ids[i]];
+                    double y1 = y_map[anchor_ids[i]];
+                    double x2 = x_map[anchor_ids[j]];
+                    double y2 = y_map[anchor_ids[j]];
+                    double x3 = x_map[anchor_ids[k]];
+                    double y3 = y_map[anchor_ids[k]];
+
+                    // Calcolo area per verificare che non siano allineate
+                    double area = fabs((x2 - x1)*(y3 - y1) - (y2 - y1)*(x3 - x1)) / 2.0;
+                    if (area > 1e-6) {
+                        a1 = anchor_ids[i];
+                        a2 = anchor_ids[j];
+                        a3 = anchor_ids[k];
+                        found = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if (found) {
+        double x1 = x_map[a1], y1 = y_map[a1], r1 = dist_map[a1];
+        double x2 = x_map[a2], y2 = y_map[a2], r2 = dist_map[a2];
+        double x3 = x_map[a3], y3 = y_map[a3], r3 = dist_map[a3];
+
+        // --- Sistema lineare per la trilaterazione ---
+        double A11 = 2*(x2 - x1);
+        double A12 = 2*(y2 - y1);
+        double A21 = 2*(x3 - x1);
+        double A22 = 2*(y3 - y1);
+
+        double b1 = r1*r1 - r2*r2 + x2*x2 - x1*x1 + y2*y2 - y1*y1;
+        double b2 = r1*r1 - r3*r3 + x3*x3 - x1*x1 + y3*y3 - y1*y1;
+
+        double det = A11*A22 - A12*A21;
+
+        if (fabs(det) > 1e-12) {
+            double x_est = ( b1*A22 - A12*b2 ) / det;
+            double y_est = (-b1*A21 + A11*b2 ) / det;
+
+            node.storage(x_stimato{}) = x_est;
+            node.storage(y_stimato{}) = y_est;
+        }
+    }
+
+
+
+
+    /*if (node.storage(distance_nodo_ancora_map{}).size() >= 3 && node.current_time() > 15){
+        auto& dist_map = node.storage(distance_nodo_ancora_map{});
+        auto& x_map = node.storage(anchor_x_map{});
+        auto& y_map = node.storage(anchor_y_map{});
+
+        auto it = dist_map.begin();
+        int a1 = it->first; double x1 = x_map[a1]; double y1 = y_map[a1]; double r1 = it->second;
+        ++it;
+        int a2 = it->first; double x2 = x_map[a2]; double y2 = y_map[a2]; double r2 = it->second;
+        ++it;
+        int a3 = it->first; double x3 = x_map[a3]; double y3 = y_map[a3]; double r3 = it->second;
+
+        double A11 = 2 * (x2 - x1);
+        double A12 = 2 * (y2 - y1);
+        double A21 = 2 * (x3 - x1);
+        double A22 = 2 * (y3 - y1);
+
+        double b1 = r1*r1 - r2*r2 + x2*x2 - x1*x1 + y2*y2 - y1*y1;
+        double b2 = r1*r1 - r3*r3 + x3*x3 - x1*x1 + y3*y3 - y1*y1;
+
+        double det = A11*A22 - A12*A21;
+
+        if (fabs(det) > 1e-12) { // se le ancore non sono allineate
+            double x_est = ( b1*A22 - A12*b2 ) / det;
+            double y_est = (-b1*A21 + A11*b2 ) / det;
+            node.storage(x_stimato{}) = x_est;
+            node.storage(y_stimato{}) = y_est;
+        } else {
+            // Caso degenerato
+            node.storage(x_stimato{}) = 0;
+            node.storage(y_stimato{}) = 0;
+        }
+
+    }*/
+
 
     // usage of node storage
     node.storage(node_size{})  = 10;
     node.storage(node_shape{}) = shape::sphere;
     node.storage(spr{}) = supp.str();
+     node.storage(sprr{}) = supp2.str();
     
 
 }
@@ -301,7 +409,10 @@ using store_t = tuple_store<
     anchor_correction_map,  std::unordered_map<int,int, fcpp::common::hash<int>>,
     anchor_x_map,           std::unordered_map<int,int, fcpp::common::hash<int>>,
     anchor_y_map,           std::unordered_map<int,int, fcpp::common::hash<int>>,
-    distance_nodo_ancora_map, std::unordered_map<int,int, fcpp::common::hash<int>>
+    distance_nodo_ancora_map, std::unordered_map<int,int, fcpp::common::hash<int>>,
+    x_stimato,              double,
+    y_stimato,              double,
+    sprr,                   std::string
 >;
 //! @brief The tags and corresponding aggregators to be logged (change as needed).
 using aggregator_t = aggregators<
