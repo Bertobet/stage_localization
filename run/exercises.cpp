@@ -117,15 +117,18 @@ MAIN() {
         node.storage(node_color{}) = color(GREEN);
     }
 
+    std::vector<int> my_anchor_keys;
+    if (node.storage(is_anchor{}))
+        my_anchor_keys = { id };
+
     // Creazione hop map
 
-    std::vector<int> my_keys = { id };
     auto hop_map_all = spawn(CALL, [&](int nodeid){
         using fcpp::coordination::abf_hops;
         bool is_source = (node.uid == nodeid);
         hops_t d = abf_hops(CALL, is_source);
         return make_tuple(static_cast<int>(d), true);
-    }, my_keys);   
+    }, my_anchor_keys);   
     node.storage(hop_map{}) = hop_map_all;
 
     std::stringstream ss;
@@ -136,51 +139,69 @@ MAIN() {
             ss << "(id: " << key << " hop: " << value << " )";
     }
 
-    // Creazione map distance
-
-    std::vector<int> my_anchor_keys;
-    if (node.storage(is_anchor{}))
-        my_anchor_keys = { id };
-
-    auto distance_map_all = spawn(CALL, [&](int nodeid){
+    // trasmissione posizione ancore
+    auto information_anchor_map = spawn(CALL, [&](int nodeid){
         using fcpp::coordination::abf_hops;
         bool is_source = (node.uid == nodeid);
-        int d = abf_distance(CALL, is_source);
-        return make_tuple(d, true);
+        auto distance = abf_hops(CALL, is_source);
+        auto xs = broadcast(CALL, distance, x);
+        auto ys = broadcast(CALL, distance, y);
+        return make_tuple(make_tuple(xs, ys), true);
     }, my_anchor_keys);
+
+    for (auto const& [id, t] : information_anchor_map) {
+        node.storage(anchor_x_map{})[id] = get<0>(t);
+        node.storage(anchor_y_map{})[id] = get<1>(t);
+    }
+
+    // Creazione map distance
+
+    auto& xs_map = node.storage(anchor_x_map{});
+    auto& ys_map = node.storage(anchor_y_map{});
+
+    std::unordered_map<int,double, fcpp::common::hash<int>> distance_map_all;
+
+    for (auto const& [id_anchor, x_anchor] : xs_map) {
+        double y_anchor = ys_map.at(id_anchor);
+
+        double dx = x_anchor - x;
+        double dy = y_anchor - y;
+        double dist = std::sqrt(dx*dx + dy*dy);
+
+        distance_map_all[id_anchor] = dist;
+    }
 
     node.storage(anchor_distance_map{}) = distance_map_all;
 
     std::stringstream supp2;
-    if (distance_map_all.empty()) {
+    if (node.storage(anchor_distance_map{}).empty()) {
         supp2 << "(vuota)";
     } else {
-        for (auto const& [key, value] : distance_map_all) 
+        for (auto const& [key, value] : node.storage(anchor_distance_map{})) 
             supp2 << "(id: " << key << " dista: " << value << " )";
     }
 
-    // Calcolo correction
 
+    // Calcolo correction
 
     int correction = 0;
     int hop= 0, distance = 0;
-    if (node.storage(is_anchor{}) && !node.storage(flag_correction{}) && node.current_time() > 10){
+    if (node.storage(is_anchor{})){
         for (auto const& [key, value] : node.storage(anchor_distance_map{})){
             auto it = node.storage(hop_map{}).find(key);
             distance += value;
             hop += it->second;
         }   
-        node.storage(flag_correction{}) = true;
-        node.storage(correction_anchor{}) = distance/hop;
+        if (distance != 0 && hop != 0)
+            node.storage(correction_anchor{}) = distance/hop;
     }
 
     // Trasmissione correction
 
-    if ((node.storage(is_anchor{}) && node.storage(flag_correction{})) || node.current_time() > 11){
+    if (node.storage(is_anchor{}))
         node.storage(anchor_correction_map{})[id] = node.storage(correction_anchor{});
         
-
-        auto correction_map_all = spawn(CALL, [&](int nodeid){
+    auto correction_map_all = spawn(CALL, [&](int nodeid){
             using fcpp::coordination::abf_hops;
             bool is_source = (node.uid == nodeid);
             auto distance = abf_hops(CALL, is_source);
@@ -188,70 +209,29 @@ MAIN() {
             return make_tuple(d, true);
         }, my_anchor_keys);
 
-        node.storage(anchor_correction_map{}) = correction_map_all;
-    }
-    
+    node.storage(anchor_correction_map{}) = correction_map_all;
 
-
-    /*std::stringstream supp;
-    if (node.storage(anchor_correction_map{}).empty()) {
-        supp << "(vuota)";
+    /*std::stringstream supp2;
+    if (node.storage(anchor_y_map{}).empty()) {
+        supp2 << "(vuota)";
     } else {
-        for (auto const& [key, value] : node.storage(anchor_correction_map{})) 
-            supp << "(id: " << key << " correction: " << value << " )";
+        for (auto const& [key, value] : node.storage(anchor_y_map{})) 
+            supp2 << "(id: " << key << " y: " << value << " )";
     }*/
 
-    // Trasmissione position ancore
-
-    if (node.storage(is_anchor{}))
-        node.storage(anchor_x_map{})[id] = x;
-
-    auto x_map_all = spawn(CALL, [&](int nodeid){
-        using fcpp::coordination::abf_hops;
-        bool is_source = (node.uid == nodeid);
-        auto distance = abf_hops(CALL, is_source);
-        int d = broadcast(CALL, distance, x);
-        return make_tuple(d, true);
-    }, my_anchor_keys);
-
-    node.storage(anchor_x_map{}) = x_map_all;
-
-    if (node.storage(is_anchor{}))
-        node.storage(anchor_y_map{})[id] = y;
-
-    auto y_map_all = spawn(CALL, [&](int nodeid){
-        using fcpp::coordination::abf_hops;
-        bool is_source = (node.uid == nodeid);
-        auto distance = abf_hops(CALL, is_source);
-        int d = broadcast(CALL, distance, y);
-        return make_tuple(d, true);
-    }, my_anchor_keys);
-
-    node.storage(anchor_y_map{}) = y_map_all;
-
     //Calcolo distanza nodo-ancora
-    if (node.current_time() > 13){
-        for (int i = 0; i < total_anchors; i++){
-            auto& hop_map_ref = node.storage(hop_map{});
-            auto& corr_map_ref = node.storage(anchor_correction_map{});
-            auto& dist_map_ref = node.storage(distance_nodo_ancora_map{});
+    for (int i = 0; i < total_anchors; i++){
+        auto& hop_map_ref = node.storage(hop_map{});
+        auto& corr_map_ref = node.storage(anchor_correction_map{});
+        auto& dist_map_ref = node.storage(distance_nodo_ancora_map{});
 
-            auto hop_it = hop_map_ref.find(i);
-            auto corr_it = corr_map_ref.find(i);
+        auto hop_it = hop_map_ref.find(i);
+        auto corr_it = corr_map_ref.find(i);
 
-            //Controlla che entrambe le chiavi esistano
-            if (hop_it != hop_map_ref.end() && corr_it != corr_map_ref.end()) {
-                dist_map_ref[i] = hop_it->second * corr_it->second;
-            }
+        //Controlla che entrambe le chiavi esistano
+        if (hop_it != hop_map_ref.end() && corr_it != corr_map_ref.end()) {
+            dist_map_ref[i] = hop_it->second * corr_it->second;
         }
-    }
-      
-    std::stringstream supp;
-    if (node.storage(distance_nodo_ancora_map{}).empty()) {
-        supp << "(vuota)";
-    } else {
-        for (auto const& [key, value] : node.storage(distance_nodo_ancora_map{})) 
-            supp << "(id: " << key << " correction: " << value << " )";
     }
 
     //trilaterazione
@@ -265,102 +245,54 @@ MAIN() {
         anchor_ids.push_back(id);
 
     int a1 = -1, a2 = -1, a3 = -1;
-    bool found = false;
 
-    // Cerca 3 ancore non allineate
     if (anchor_ids.size() >= 3) {
-        for (size_t i = 0; i < anchor_ids.size() && !found; ++i) {
-            for (size_t j = i + 1; j < anchor_ids.size() && !found; ++j) {
-                for (size_t k = j + 1; k < anchor_ids.size() && !found; ++k) {
-                    double x1 = x_map[anchor_ids[i]];
-                    double y1 = y_map[anchor_ids[i]];
-                    double x2 = x_map[anchor_ids[j]];
-                    double y2 = y_map[anchor_ids[j]];
-                    double x3 = x_map[anchor_ids[k]];
-                    double y3 = y_map[anchor_ids[k]];
+    // Prendo la prima ancora come riferimento
+    int a_ref = anchor_ids[0];
+    double x1 = x_map[a_ref];
+    double y1 = y_map[a_ref];
+    double r1 = dist_map[a_ref];
 
-                    // Calcolo area per verificare che non siano allineate
-                    double area = fabs((x2 - x1)*(y3 - y1) - (y2 - y1)*(x3 - x1)) / 2.0;
-                    if (area > 1e-6) {
-                        a1 = anchor_ids[i];
-                        a2 = anchor_ids[j];
-                        a3 = anchor_ids[k];
-                        found = true;
-                    }
-                }
-            }
-        }
+    // Inizializzo i coefficienti della matrice normale
+    double ATA11 = 0, ATA12 = 0, ATA22 = 0;
+    double ATb1 = 0, ATb2 = 0;
+
+    // Costruisci e accumula (AᵀA) e (Aᵀb)
+    for (size_t i = 1; i < anchor_ids.size(); ++i) {
+        int ai = anchor_ids[i];
+        double xi = x_map[ai];
+        double yi = y_map[ai];
+        double ri = dist_map[ai];
+
+        double Ai1 = 2 * (xi - x1);
+        double Ai2 = 2 * (yi - y1);
+        double bi  = r1*r1 - ri*ri + xi*xi - x1*x1 + yi*yi - y1*y1;
+
+        ATA11 += Ai1 * Ai1;
+        ATA12 += Ai1 * Ai2;
+        ATA22 += Ai2 * Ai2;
+        ATb1  += Ai1 * bi;
+        ATb2  += Ai2 * bi;
     }
 
-    if (found) {
-        double x1 = x_map[a1], y1 = y_map[a1], r1 = dist_map[a1];
-        double x2 = x_map[a2], y2 = y_map[a2], r2 = dist_map[a2];
-        double x3 = x_map[a3], y3 = y_map[a3], r3 = dist_map[a3];
+    // Determinante del sistema normale
+    double det = ATA11 * ATA22 - ATA12 * ATA12;
 
-        // --- Sistema lineare per la trilaterazione ---
-        double A11 = 2*(x2 - x1);
-        double A12 = 2*(y2 - y1);
-        double A21 = 2*(x3 - x1);
-        double A22 = 2*(y3 - y1);
+    if (fabs(det) > 1e-12) {
+        double x_est = (ATb1 * ATA22 - ATA12 * ATb2) / det;
+        double y_est = (ATA11 * ATb2 - ATA12 * ATb1) / det;
 
-        double b1 = r1*r1 - r2*r2 + x2*x2 - x1*x1 + y2*y2 - y1*y1;
-        double b2 = r1*r1 - r3*r3 + x3*x3 - x1*x1 + y3*y3 - y1*y1;
-
-        double det = A11*A22 - A12*A21;
-
-        if (fabs(det) > 1e-12) {
-            double x_est = ( b1*A22 - A12*b2 ) / det;
-            double y_est = (-b1*A21 + A11*b2 ) / det;
-
-            node.storage(x_stimato{}) = x_est;
-            node.storage(y_stimato{}) = y_est;
-        }
+        node.storage(x_stimato{}) = x_est;
+        node.storage(y_stimato{}) = y_est;
     }
-
-
-
-
-    /*if (node.storage(distance_nodo_ancora_map{}).size() >= 3 && node.current_time() > 15){
-        auto& dist_map = node.storage(distance_nodo_ancora_map{});
-        auto& x_map = node.storage(anchor_x_map{});
-        auto& y_map = node.storage(anchor_y_map{});
-
-        auto it = dist_map.begin();
-        int a1 = it->first; double x1 = x_map[a1]; double y1 = y_map[a1]; double r1 = it->second;
-        ++it;
-        int a2 = it->first; double x2 = x_map[a2]; double y2 = y_map[a2]; double r2 = it->second;
-        ++it;
-        int a3 = it->first; double x3 = x_map[a3]; double y3 = y_map[a3]; double r3 = it->second;
-
-        double A11 = 2 * (x2 - x1);
-        double A12 = 2 * (y2 - y1);
-        double A21 = 2 * (x3 - x1);
-        double A22 = 2 * (y3 - y1);
-
-        double b1 = r1*r1 - r2*r2 + x2*x2 - x1*x1 + y2*y2 - y1*y1;
-        double b2 = r1*r1 - r3*r3 + x3*x3 - x1*x1 + y3*y3 - y1*y1;
-
-        double det = A11*A22 - A12*A21;
-
-        if (fabs(det) > 1e-12) { // se le ancore non sono allineate
-            double x_est = ( b1*A22 - A12*b2 ) / det;
-            double y_est = (-b1*A21 + A11*b2 ) / det;
-            node.storage(x_stimato{}) = x_est;
-            node.storage(y_stimato{}) = y_est;
-        } else {
-            // Caso degenerato
-            node.storage(x_stimato{}) = 0;
-            node.storage(y_stimato{}) = 0;
-        }
-
-    }*/
+}
 
 
     // usage of node storage
     node.storage(node_size{})  = 10;
     node.storage(node_shape{}) = shape::sphere;
-    node.storage(spr{}) = supp.str();
-     node.storage(sprr{}) = supp2.str();
+    //node.storage(spr{}) = supp.str();
+    node.storage(sprr{}) = supp2.str();
     
 
 }
@@ -403,7 +335,7 @@ using store_t = tuple_store<
     is_anchor,              bool,
     hop_map,                std::unordered_map<int,int, fcpp::common::hash<int>>,
     spr,                    std::string,
-    anchor_distance_map,    std::unordered_map<int,int, fcpp::common::hash<int>>,
+    anchor_distance_map,    std::unordered_map<int,double, fcpp::common::hash<int>>,
     correction_anchor,      int,
     flag_correction,        bool,
     anchor_correction_map,  std::unordered_map<int,int, fcpp::common::hash<int>>,
